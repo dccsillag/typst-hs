@@ -53,6 +53,7 @@ data Markup
   | MFrac Markup Markup
   | MAttach (Maybe Markup) (Maybe Markup) Markup -- bottom then top
   | MGroup (Maybe Text) (Maybe Text) [Markup] -- maybes are open/cloes delims
+  | MarkupSourcePos SourcePos Markup
   deriving (Show, Ord, Eq, Data, Typeable)
 
 newtype Identifier = Identifier Text
@@ -67,6 +68,7 @@ data Arg
   | ArrayArg [[Markup]]
   | SpreadArg Expr
   | BlockArg [Markup]
+  | ArgSourcePos SourcePos Arg
   deriving (Show, Ord, Eq, Data, Typeable)
 
 data Param
@@ -75,17 +77,19 @@ data Param
   | DestructuringParam [BindPart]
   | SinkParam (Maybe Identifier)
   | SkipParam -- _
+  | ParamSourcePos SourcePos Param
   deriving (Show, Ord, Eq, Data, Typeable)
 
 data Bind
-  = BasicBind (Maybe Identifier)
-  | DestructuringBind [BindPart]
+  = BasicBind SourcePos (Maybe Identifier)
+  | DestructuringBind SourcePos [BindPart]
   deriving (Show, Ord, Eq, Data, Typeable)
 
 data BindPart
   = Simple (Maybe Identifier)
   | WithKey Identifier (Maybe Identifier)
   | Sink (Maybe Identifier)
+  | BindPartSourcePos SourcePos BindPart
   deriving (Show, Ord, Eq, Data, Typeable)
 
 data Unit = Pt | Mm | Cm | In | Deg | Rad | Em | Fr | Percent
@@ -107,8 +111,8 @@ data Block
   deriving (Show, Ord, Eq, Data, Typeable)
 
 data Spreadable a =
-    Spr Expr
-  | Reg a
+    Spr SourcePos Expr
+  | Reg SourcePos a
   deriving (Show, Ord, Eq, Data, Typeable)
 
 -- binary-op ::=
@@ -155,10 +159,11 @@ data Expr
   | Label Text
   | Break
   | Continue
+  | ExprSourcePos SourcePos Expr
   deriving (Show, Ord, Eq, Data, Typeable)
 
 data Imports
   = AllIdentifiers
-  | SomeIdentifiers [(Identifier, Maybe Identifier)] -- Maybe is the 'as'
-  | NoIdentifiers (Maybe Identifier)  -- Maybe is the 'as'
+  | SomeIdentifiers [((SourcePos, Identifier), Maybe (SourcePos, Identifier))] -- Maybe is the 'as'
+  | NoIdentifiers (Maybe (SourcePos, Identifier))  -- Maybe is the 'as'
   deriving (Show, Ord, Eq, Data, Typeable)

@@ -465,13 +465,13 @@ evalExpr expr =
     Array es -> VArray <$> foldM
            ( \xs x ->
                case x of
-                 Spr y -> do
+                 Spr _ y -> do
                    val <- evalExpr y
                    case val of
                      VArray ys -> pure (xs <> ys)
                      _ -> fail $ "Could not spread " <> show (valType val) <>
                                  " into array"
-                 Reg e -> do
+                 Reg _ e -> do
                    val <- evalExpr e
                    pure (V.snoc xs val ) )
            []
@@ -481,14 +481,14 @@ evalExpr expr =
         <$> foldM
           ( \m v -> do
               case v of
-                Reg (k, e) -> do
+                Reg _ (k, e) -> do
                   k' <- case k of
                            Ident i -> pure i
                            _ -> do VString s <- evalExpr k
                                    pure $ Identifier s
                   val <- evalExpr e
                   pure $ m OM.|> (k', val)
-                Spr y -> do
+                Spr _ y -> do
                   val <- evalExpr y
                   case val of
                     VDict m' -> pure (m' OM.|<> m)
@@ -528,9 +528,9 @@ evalExpr expr =
     Let bind e -> do
       val <- evalExpr e
       case bind of
-        BasicBind (Just ident) -> addIdentifier ident val
-        BasicBind Nothing -> pure ()
-        DestructuringBind parts -> destructuringBind addIdentifier parts val
+        BasicBind _ (Just ident) -> addIdentifier ident val
+        BasicBind _ Nothing -> pure ()
+        DestructuringBind _ parts -> destructuringBind addIdentifier parts val
       pure VNone
     LetFunc name params e -> do
       val <- toFunction (Just name) params e
@@ -767,9 +767,9 @@ evalExpr expr =
     Assign e1 e2 -> do
       val <- evalExpr e2
       case e1 of
-        Binding (BasicBind (Just ident)) -> updateIdentifier ident val
-        Binding (BasicBind Nothing) -> pure ()
-        Binding (DestructuringBind parts) ->
+        Binding (BasicBind _ (Just ident)) -> updateIdentifier ident val
+        Binding (BasicBind _ Nothing) -> pure ()
+        Binding (DestructuringBind _ parts) ->
           destructuringBind updateIdentifier parts val
         x -> updateExpression x val
       pure VNone
@@ -798,9 +798,9 @@ evalExpr expr =
       let go [] result = pure result
           go (x : xs) result = do
             case bind of
-              BasicBind (Just ident) -> addIdentifier ident x
-              BasicBind Nothing -> pure ()
-              DestructuringBind parts ->
+              BasicBind _ (Just ident) -> addIdentifier ident x
+              BasicBind _ Nothing -> pure ()
+              DestructuringBind _ parts ->
                 destructuringBind addIdentifier parts x
             val <- evalExpr e2
             hadBreak <- (== FlowBreak) . evalFlowDirective <$> getState
@@ -842,13 +842,13 @@ evalExpr expr =
       case imports of
         AllIdentifiers -> importModule modmap
         SomeIdentifiers pairs -> do
-          let addFromModule m (ident, mbAs) =
+          let addFromModule m ((_, ident), mbAs) =
                 case M.lookup ident modmap of
                   Nothing -> fail $ show ident <> " not defined in module"
-                  Just v -> pure $ M.insert (fromMaybe ident mbAs) v m
+                  Just v -> pure $ M.insert (maybe ident snd mbAs) v m
           foldM addFromModule mempty pairs >>= importModule
         NoIdentifiers mbAs -> do
-          let ident = fromMaybe modid mbAs
+          let ident = maybe modid snd mbAs
           addIdentifier ident (VModule ident modmap)
       pure VNone
     Include e -> do
@@ -858,6 +858,8 @@ evalExpr expr =
           (cs, _) <- loadModule t
           pure $ VContent cs
         _ -> fail "Include requires a path"
+
+    ExprSourcePos _ inner -> evalExpr inner
 
 toFunction ::
   Monad m =>
@@ -893,6 +895,7 @@ toFunction mbname params e = do
                   destructuringBind addIdentifier parts x
                   pure $ as {positional = xs}
             setParam as SkipParam = pure as
+            setParam as (ParamSourcePos _ inner) = setParam as inner
         inBlock FunctionScope $ do
           -- We create a closure around the identifiers defined
           -- where the function is defined:
@@ -1088,6 +1091,7 @@ toArguments = foldM addArg (Arguments mempty OM.empty)
     addArg args (BlockArg ms) = do
       val <- pInnerContents ms
       pure $ args {positional = positional args ++ [VContent val]}
+    addArg args (ArgSourcePos _ inner) = addArg args inner
 
 addIdentifier :: Monad m => Identifier -> Val -> MP m ()
 addIdentifier ident val = do

@@ -108,8 +108,8 @@ inBraces :: P a -> P a
 inBraces pa = withNewlines (between (sym "{") (char '}') pa) <* ws
 
 pMarkup :: P Markup
-pMarkup =
-  pSpace
+pMarkup = MarkupSourcePos <$> getPosition <*>
+  (pSpace
     <|> pHeading
     <|> pComment
     <|> pEol
@@ -131,7 +131,7 @@ pMarkup =
     <|> pRef
     <|> pHash
     <|> pBracketed
-    <|> pSymbol
+    <|> pSymbol)
 
 -- We need to group paired brackets or the closing bracketed may be
 -- taken to close a pContent block:
@@ -330,7 +330,7 @@ mAlignPoint = MAlignPoint <$ sym "&"
 mArgs :: P [Arg]
 mArgs =
   inParens $
-    many (mKeyValArg <|> mArrayArg <|> mNormArg <|> mMathArg)
+    many (ArgSourcePos <$> getPosition <*> (mKeyValArg <|> mArrayArg <|> mNormArg <|> mMathArg))
   where
     sep = void (sym ",") <|> void (lookAhead (char ')'))
     mNormArg = try $ NormalArg <$> (char '#' *> pExpr <* sep)
@@ -739,12 +739,12 @@ pKeyword t = lexeme $ try $ string t *> notFollowedBy (satisfy isIdentContinue)
 --             "break", "continue", "return", "import", "include", "from"]
 
 pExpr :: P Expr
-pExpr = buildExpressionParser operatorTable pBasicExpr
+pExpr = ExprSourcePos <$> getPosition <*> buildExpressionParser operatorTable pBasicExpr
 
 -- A basic expression excludes the unary and binary operators outside of parens,
 -- but includes field access and function application. Needed for pHash.
 pBasicExpr :: P Expr
-pBasicExpr = buildExpressionParser basicOperatorTable pBaseExpr
+pBasicExpr = ExprSourcePos <$> getPosition <*> buildExpressionParser basicOperatorTable pBaseExpr
 
 pQualifiedIdentifier :: P Expr
 pQualifiedIdentifier =
@@ -775,11 +775,11 @@ pLiteral =
         )
 
 fieldAccess :: Operator Text PState Identity Expr
-fieldAccess = Postfix (FieldAccess <$> try (sym "." *> pIdent))
+fieldAccess = Postfix (FieldAccess <$> try (sym "." *> (ExprSourcePos <$> getPosition <*> pIdent)))
 
 -- don't allow space after .
 restrictedFieldAccess :: Operator Text PState Identity Expr
-restrictedFieldAccess = Postfix (FieldAccess <$> try (char '.' *> pIdent))
+restrictedFieldAccess = Postfix (FieldAccess <$> try (char '.' *> (ExprSourcePos <$> getPosition <*> pIdent)))
 
 functionCall :: Operator Text PState Identity Expr
 functionCall =
@@ -930,7 +930,7 @@ pIdent :: P Expr
 pIdent = Ident <$> pIdentifier
 
 pBlock :: P Expr
-pBlock = Block <$> (pCodeBlock <|> pContent)
+pBlock = ExprSourcePos <$> getPosition <*> (Block <$> (pCodeBlock <|> pContent))
 
 pCodeBlock :: P Block
 pCodeBlock = CodeBlock <$> inBraces pCode
@@ -974,8 +974,8 @@ pArrayExpr =
   try $
     inParens $
       ( do
-          v <- pSpread <|> (Reg <$> pExpr)
-          vs <- many $ try $ sym "," *> (pSpread <|> (Reg <$> pExpr))
+          v <- pSpread <|> (Reg <$> getPosition <*> pExpr)
+          vs <- many $ try $ sym "," *> (pSpread <|> (Reg <$> getPosition <*> pExpr))
           if null vs
             then void $ sym ","
             else optional $ void $ sym ","
@@ -990,10 +990,10 @@ pDictExpr = try $ inParens (pEmptyDict <|> pNonemptyDict)
   where
     pEmptyDict = Dict mempty <$ sym ":"
     pNonemptyDict = Dict <$> sepEndBy1 (pSpread <|> pPair) (sym ",")
-    pPair = Reg <$> ((,) <$> pExpr <*> try (sym ":" *> pExpr))
+    pPair = Reg <$> getPosition <*> ((,) <$> pExpr <*> try (sym ":" *> pExpr))
 
 pSpread :: P (Spreadable a)
-pSpread = try $ string ".." *> (Spr <$> pExpr)
+pSpread = try $ string ".." *> (Spr <$> getPosition <*> pExpr)
 
 -- func-expr ::= (params | ident) '=>' expr
 pFuncExpr :: P Expr
@@ -1047,7 +1047,7 @@ pArg = pKeyValArg <|> pSpreadArg <|> pNormalArg
 
 -- params ::= '(' (param (',' param)* ','?)? ')'
 pParams :: P [Param]
-pParams = inParens $ sepEndBy pParam (sym ",")
+pParams = inParens $ sepEndBy (ParamSourcePos <$> getPosition <*> pParam) (sym ",")
 
 -- param ::= ident (':' expr)?
 pParam :: P Param
@@ -1065,14 +1065,14 @@ pParam =
       i <- pIdentifier
       (DefaultParam i <$> (sym ":" *> pExpr)) <|> pure (NormalParam i)
     pDestructuringParam = do
-      DestructuringBind parts <- pDestructuringBind
+      DestructuringBind _ parts <- pDestructuringBind
       pure $ DestructuringParam parts
 
 pBind :: P Bind
 pBind = pBasicBind <|> pDestructuringBind
 
 pBasicBind :: P Bind
-pBasicBind = BasicBind <$> try (pBindIdentifier <|> inParens pBindIdentifier)
+pBasicBind = BasicBind <$> getPosition <*> try (pBindIdentifier <|> inParens pBindIdentifier)
 
 pBindIdentifier :: P (Maybe Identifier)
 pBindIdentifier = do
@@ -1084,7 +1084,7 @@ pBindIdentifier = do
 pDestructuringBind :: P Bind
 pDestructuringBind =
   inParens $
-    DestructuringBind <$> (pBindPart `sepEndBy` (sym ","))
+    DestructuringBind <$> getPosition <*> ((BindPartSourcePos <$> getPosition <*> pBindPart) `sepEndBy` (sym ","))
   where
     pBindPart = do
       sink <- option False $ True <$ string ".."
@@ -1106,7 +1106,7 @@ pLetExpr = do
   pKeyword "let"
   bind <- pBind
   case bind of
-    BasicBind mbname -> do
+    BasicBind _ mbname -> do
       mbparams <- option Nothing $ Just <$> pParams
       mbexpr <- option Nothing $ Just <$> (sym "=" *> pExpr)
       case (mbparams, mbexpr, mbname) of
@@ -1168,10 +1168,10 @@ pImportExpr = pKeyword "import" *> (Import <$> pExpr <*> pImportItems)
              )
         ) <|> (NoIdentifiers <$> pAs)
     pIdentifierAs = do
-      ident <- pIdentifier
+      ident <- (,) <$> getPosition <*> pIdentifier
       mbAs <- pAs
       pure (ident, mbAs)
-    pAs = option Nothing $ Just <$> (pKeyword "as" *> pIdentifier)
+    pAs = option Nothing $ Just <$> (pKeyword "as" *> ((,) <$> getPosition <*> pIdentifier))
 
 pBreakExpr :: P Expr
 pBreakExpr = Break <$ pKeyword "break"
